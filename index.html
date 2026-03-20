@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Human vs Animal Classifier</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --border: #1e1e2e;
+      --accent-human: #00e5ff;
+      --accent-animal: #ff6b35;
+      --text: #e8e8f0;
+      --muted: #5a5a7a;
+      --glow-human: 0 0 40px rgba(0,229,255,0.25);
+      --glow-animal: 0 0 40px rgba(255,107,53,0.25);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Syne', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow-x: hidden;
+    }
+
+    /* Animated background grid */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    body::after {
+      content: '';
+      position: fixed;
+      top: -50%;
+      left: -20%;
+      width: 60%;
+      height: 80%;
+      background: radial-gradient(ellipse, rgba(0,229,255,0.04) 0%, transparent 70%);
+      z-index: 0;
+      pointer-events: none;
+      animation: driftLeft 18s ease-in-out infinite alternate;
+    }
+
+    @keyframes driftLeft {
+      from { transform: translate(0, 0); }
+      to { transform: translate(10%, 5%); }
+    }
+
+    .container {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 780px;
+      padding: 48px 24px 80px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 52px;
+    }
+
+    .badge {
+      display: inline-block;
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 3px;
+      color: var(--accent-human);
+      border: 1px solid rgba(0,229,255,0.3);
+      padding: 5px 14px;
+      border-radius: 2px;
+      margin-bottom: 20px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      font-size: clamp(2.2rem, 6vw, 3.6rem);
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -1px;
+    }
+
+    h1 span.h { color: var(--accent-human); }
+    h1 span.a { color: var(--accent-animal); }
+
+    .subtitle {
+      margin-top: 14px;
+      font-family: 'Space Mono', monospace;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 1px;
+    }
+
+    /* Upload area */
+    .upload-zone {
+      position: relative;
+      border: 1.5px dashed var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 48px 32px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.3s, background 0.3s, box-shadow 0.3s;
+      overflow: hidden;
+    }
+
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--accent-human);
+      background: rgba(0,229,255,0.04);
+      box-shadow: var(--glow-human);
+    }
+
+    .upload-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .upload-icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 20px;
+      border: 1.5px solid var(--border);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      transition: border-color 0.3s, transform 0.3s;
+    }
+
+    .upload-zone:hover .upload-icon {
+      border-color: var(--accent-human);
+      transform: scale(1.08);
+    }
+
+    .upload-label {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .upload-hint {
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    /* Preview */
+    #preview-wrap {
+      display: none;
+      position: relative;
+      margin-top: 28px;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1.5px solid var(--border);
+      background: var(--surface);
+    }
+
+    #preview-wrap img {
+      width: 100%;
+      max-height: 360px;
+      object-fit: cover;
+      display: block;
+    }
+
+    .preview-overlay {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+    }
+
+    .clear-btn {
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      background: rgba(10,10,15,0.85);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+    }
+
+    .clear-btn:hover { color: #ff4d4d; border-color: #ff4d4d; }
+
+    /* Classify button */
+    #classify-btn {
+      display: none;
+      width: 100%;
+      margin-top: 20px;
+      padding: 18px;
+      font-family: 'Syne', sans-serif;
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--bg);
+      background: var(--accent-human);
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.25s, transform 0.15s, box-shadow 0.25s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #classify-btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
+      transform: translateX(-100%);
+      transition: transform 0.5s;
+    }
+
+    #classify-btn:hover::before { transform: translateX(100%); }
+    #classify-btn:hover { box-shadow: var(--glow-human); transform: translateY(-1px); }
+    #classify-btn:active { transform: translateY(0); }
+    #classify-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    /* Spinner */
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(10,10,15,0.4);
+      border-top-color: var(--bg);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Result card */
+    #result-card {
+      display: none;
+      margin-top: 28px;
+      border-radius: 8px;
+      border: 1.5px solid var(--border);
+      background: var(--surface);
+      overflow: hidden;
+      animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .result-header {
+      padding: 24px 28px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .result-emoji {
+      font-size: 2.5rem;
+      line-height: 1;
+    }
+
+    .result-label {
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .result-title {
+      font-size: 1.8rem;
+      font-weight: 800;
+      margin-top: 2px;
+    }
+
+    .result-title.human { color: var(--accent-human); }
+    .result-title.animal { color: var(--accent-animal); }
+
+    /* Bars */
+    .bars-section {
+      padding: 24px 28px 28px;
+    }
+
+    .bar-row {
+      margin-bottom: 18px;
+    }
+
+    .bar-meta {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    .bar-name {
+      font-family: 'Space Mono', monospace;
+      font-size: 12px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .bar-pct {
+      font-family: 'Space Mono', monospace;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .bar-track {
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      width: 0%;
+      transition: width 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .bar-fill.human { background: var(--accent-human); box-shadow: 0 0 10px rgba(0,229,255,0.5); }
+    .bar-fill.animal { background: var(--accent-animal); box-shadow: 0 0 10px rgba(255,107,53,0.5); }
+
+    /* Model status */
+    #model-status {
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+      margin-top: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+      transition: background 0.4s;
+    }
+
+    .status-dot.ready { background: #2ecc71; box-shadow: 0 0 8px rgba(46,204,113,0.6); }
+    .status-dot.loading { background: var(--accent-human); animation: pulse 1s ease-in-out infinite; }
+    .status-dot.error { background: #ff4d4d; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* How to use */
+    .how-section {
+      margin-top: 52px;
+      border-top: 1px solid var(--border);
+      padding-top: 36px;
+    }
+
+    .section-label {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 3px;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 20px;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+    }
+
+    .step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 18px;
+      transition: border-color 0.2s;
+    }
+
+    .step:hover { border-color: rgba(0,229,255,0.3); }
+
+    .step-num {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      color: var(--accent-human);
+      letter-spacing: 2px;
+      margin-bottom: 8px;
+    }
+
+    .step-text {
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    footer {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+      padding: 24px;
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 1px;
+    }
+
+    footer a { color: var(--accent-human); text-decoration: none; }
+
+    @media (max-width: 540px) {
+      .container { padding: 32px 16px 60px; }
+      h1 { font-size: 2rem; }
+      .result-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="badge">AI · Vision · Classifier</div>
+    <h1><span class="h">Human</span> vs <span class="a">Animal</span></h1>
+    <p class="subtitle">// upload an image — get an instant prediction</p>
+  </header>
+
+  <!-- Upload zone -->
+  <div class="upload-zone" id="drop-zone">
+    <input type="file" id="file-input" accept="image/*" />
+    <div class="upload-icon">📷</div>
+    <div class="upload-label">Drop your image here</div>
+    <div class="upload-hint">or click to browse &nbsp;·&nbsp; JPG, PNG, WEBP supported</div>
+  </div>
+
+  <!-- Image preview -->
+  <div id="preview-wrap">
+    <img id="preview-img" src="" alt="Preview" />
+    <div class="preview-overlay">
+      <button class="clear-btn" id="clear-btn">✕ Clear</button>
+    </div>
+  </div>
+
+  <!-- Classify button -->
+  <button id="classify-btn" onclick="classify()">Classify Image</button>
+
+  <!-- Result card -->
+  <div id="result-card">
+    <div class="result-header">
+      <div class="result-emoji" id="result-emoji">🤔</div>
+      <div>
+        <div class="result-label">Prediction</div>
+        <div class="result-title" id="result-title">—</div>
+      </div>
+    </div>
+    <div class="bars-section">
+      <div class="bar-row">
+        <div class="bar-meta">
+          <span class="bar-name" style="color:var(--accent-human)">Human</span>
+          <span class="bar-pct" id="human-pct" style="color:var(--accent-human)">0%</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill human" id="human-bar"></div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-meta">
+          <span class="bar-name" style="color:var(--accent-animal)">Animal</span>
+          <span class="bar-pct" id="animal-pct" style="color:var(--accent-animal)">0%</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill animal" id="animal-bar"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status -->
+  <div id="model-status">
+    <div class="status-dot loading" id="status-dot"></div>
+    <span id="status-text">Loading AI model…</span>
+  </div>
+
+  <!-- How it works -->
+  <div class="how-section">
+    <div class="section-label">// How to use</div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">01 —</div>
+        <div class="step-text">Upload any photo of a human or an animal</div>
+      </div>
+      <div class="step">
+        <div class="step-num">02 —</div>
+        <div class="step-text">Click "Classify Image" to run the AI model</div>
+      </div>
+      <div class="step">
+        <div class="step-num">03 —</div>
+        <div class="step-text">See the prediction with confidence scores</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Built with <a href="https://teachablemachine.withgoogle.com/" target="_blank">Teachable Machine</a> · TensorFlow.js
+</footer>
+
+<script>
+  // ─────────────────────────────────────────────────────────────────────────
+  // IMPORTANT: Replace this URL with YOUR Teachable Machine model URL
+  // after you train your model at teachablemachine.withgoogle.com
+  // ─────────────────────────────────────────────────────────────────────────
+  const MODEL_URL = "https://teachablemachine.withgoogle.com/models/7LhSWSlsq/";
+
+  let model = null;
+
+  async function loadModel() {
+    try {
+      setStatus("loading", "Loading AI model…");
+      const modelURL = MODEL_URL + "model.json";
+      const metadataURL = MODEL_URL + "metadata.json";
+      model = await tmImage.load(modelURL, metadataURL);
+      setStatus("ready", "Model ready — upload an image");
+    } catch (e) {
+      console.error(e);
+      setStatus("error", "Model failed to load — check the MODEL_URL");
+    }
+  }
+
+  function setStatus(state, msg) {
+    const dot = document.getElementById("status-dot");
+    dot.className = "status-dot " + state;
+    document.getElementById("status-text").textContent = msg;
+  }
+
+  // ── File input & drag-drop ────────────────────────────────────────────────
+  const fileInput = document.getElementById("file-input");
+  const dropZone  = document.getElementById("drop-zone");
+  const previewWrap = document.getElementById("preview-wrap");
+  const previewImg  = document.getElementById("preview-img");
+  const classifyBtn = document.getElementById("classify-btn");
+  const resultCard  = document.getElementById("result-card");
+
+  fileInput.addEventListener("change", (e) => {
+    if (e.target.files[0]) showPreview(e.target.files[0]);
+  });
+
+  dropZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropZone.classList.add("drag-over");
+  });
+
+  dropZone.addEventListener("dragleave", () => {
+    dropZone.classList.remove("drag-over");
+  });
+
+  dropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropZone.classList.remove("drag-over");
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith("image/")) showPreview(file);
+  });
+
+  function showPreview(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      previewImg.src = e.target.result;
+      previewWrap.style.display = "block";
+      classifyBtn.style.display = "block";
+      resultCard.style.display  = "none";
+    };
+    reader.readAsDataURL(file);
+  }
+
+  document.getElementById("clear-btn").addEventListener("click", () => {
+    previewImg.src       = "";
+    previewWrap.style.display = "none";
+    classifyBtn.style.display = "none";
+    resultCard.style.display  = "none";
+    fileInput.value = "";
+  });
+
+  // ── Classification ────────────────────────────────────────────────────────
+  async function classify() {
+    if (!model) {
+      alert("Model is still loading, please wait a moment.");
+      return;
+    }
+
+    classifyBtn.disabled = true;
+    classifyBtn.innerHTML = '<span class="spinner"></span> Analyzing…';
+
+    try {
+      const predictions = await model.predict(previewImg);
+
+      // Map class names to human / animal slots
+      let humanConf = 0, animalConf = 0;
+      predictions.forEach(p => {
+        const name = p.className.toLowerCase();
+        if (name.includes("human") || name.includes("person") || name.includes("people")) {
+          humanConf = p.probability;
+        } else {
+          animalConf = p.probability;
+        }
+      });
+
+      // Fallback: if 2 classes, first = human, second = animal
+      if (humanConf === 0 && animalConf === 0 && predictions.length >= 2) {
+        humanConf  = predictions[0].probability;
+        animalConf = predictions[1].probability;
+      }
+
+      const humanPct  = Math.round(humanConf * 100);
+      const animalPct = Math.round(animalConf * 100);
+      const isHuman   = humanConf >= animalConf;
+
+      // Render result
+      document.getElementById("result-emoji").textContent = isHuman ? "🧑" : "🐾";
+      const titleEl = document.getElementById("result-title");
+      titleEl.textContent = isHuman ? "Human" : "Animal";
+      titleEl.className   = "result-title " + (isHuman ? "human" : "animal");
+
+      document.getElementById("human-pct").textContent  = humanPct + "%";
+      document.getElementById("animal-pct").textContent = animalPct + "%";
+
+      resultCard.style.display = "block";
+      // Trigger bar animation after display
+      setTimeout(() => {
+        document.getElementById("human-bar").style.width  = humanPct  + "%";
+        document.getElementById("animal-bar").style.width = animalPct + "%";
+      }, 60);
+
+    } catch (err) {
+      console.error(err);
+      alert("Classification failed. Make sure the MODEL_URL is correct.");
+    }
+
+    classifyBtn.disabled = false;
+    classifyBtn.innerHTML = "Classify Image";
+  }
+
+  // Boot
+  loadModel();
+</script>
+</body>
+</html>
